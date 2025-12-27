@@ -4,6 +4,27 @@ use std::path::Path;
 
 use clap::Parser;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Protocol {
+    Tcp,
+    Udp,
+}
+
+impl Protocol {
+    fn as_str(self) -> &'static str {
+        match self {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SocketInfo {
+    inode: u64,
+    protocol: Protocol,
+}
+
 #[derive(Parser)]
 #[command(name = "mappp")]
 #[command(about = "ポートを使用しているプロセスを探すツール")]
@@ -11,21 +32,30 @@ struct Args {
     /// 対象ポート番号
     #[arg(short, long)]
     port: u16,
+    /// tcp のみ対象にする
+    #[arg(short = 't', long)]
+    tcp: bool,
+    /// udp のみ対象にする
+    #[arg(short = 'u', long)]
+    udp: bool,
 }
 
 /// ポートからinodeを取得する
 /// /proc/net/tcp, tcp6, udp, udp6 を検索する
-fn get_inode_from_port(port: u16) -> io::Result<Vec<u64>> {
+fn get_inode_from_port(port: u16, protocols: &[Protocol]) -> io::Result<Vec<SocketInfo>> {
     let files = [
-        "/proc/net/tcp",
-        "/proc/net/tcp6",
-        "/proc/net/udp",
-        "/proc/net/udp6",
+        ("/proc/net/tcp", Protocol::Tcp),
+        ("/proc/net/tcp6", Protocol::Tcp),
+        ("/proc/net/udp", Protocol::Udp),
+        ("/proc/net/udp6", Protocol::Udp),
     ];
 
-    let mut inodes = Vec::new();
+    let mut sockets = Vec::new();
 
-    for file_path in &files {
+    for (file_path, protocol) in &files {
+        if !protocols.contains(protocol) {
+            continue;
+        }
         if let Ok(file) = fs::File::open(file_path) {
             let reader = io::BufReader::new(file);
 
@@ -46,8 +76,15 @@ fn get_inode_from_port(port: u16) -> io::Result<Vec<u64>> {
                         if parsed_port == port {
                             // inode は10番目のフィールド（インデックス9）
                             if let Ok(inode) = parts[9].parse::<u64>() {
-                                if inode != 0 && !inodes.contains(&inode) {
-                                    inodes.push(inode);
+                                if inode != 0
+                                    && !sockets.iter().any(|s: &SocketInfo| {
+                                        s.inode == inode && s.protocol == *protocol
+                                    })
+                                {
+                                    sockets.push(SocketInfo {
+                                        inode,
+                                        protocol: *protocol,
+                                    });
                                 }
                             }
                         }
@@ -57,7 +94,7 @@ fn get_inode_from_port(port: u16) -> io::Result<Vec<u64>> {
         }
     }
 
-    Ok(inodes)
+    Ok(sockets)
 }
 
 /// inodeからpidを取得する
@@ -98,21 +135,31 @@ fn get_pid_from_inode(inode: u64) -> io::Result<Vec<u32>> {
 fn main() {
     let args = Args::parse();
     let port = args.port;
+    let protocols = match (args.tcp, args.udp) {
+        (true, false) => vec![Protocol::Tcp],
+        (false, true) => vec![Protocol::Udp],
+        _ => vec![Protocol::Tcp, Protocol::Udp],
+    };
 
-    match get_inode_from_port(port) {
-        Ok(inodes) => {
-            if inodes.is_empty() {
-                println!("ポート {} を使用しているソケットが見つかりませんでした", port);
+    match get_inode_from_port(port, &protocols) {
+        Ok(sockets) => {
+            if sockets.is_empty() {
+                println!(
+                    "ポート {} を使用しているソケットが見つかりませんでした",
+                    port
+                );
             } else {
-
-                for inode in inodes {
-                    match get_pid_from_inode(inode) {
+                println!("PROTOCOL\tPORT\tINODE\tPID");
+                for socket in sockets {
+                    match get_pid_from_inode(socket.inode) {
                         Ok(pids) => {
-                            if pids.is_empty() {
-                                println!("ポート {} を使用しているプロセスが見つかりませんでした", port);
-                            } else {
-                                println!("ポート {} を使用しているPID: {:?}", port, pids);
-                            }
+                            println!(
+                                "{}\t\t{}\t{}\t{:?}",
+                                socket.protocol.as_str(),
+                                port,
+                                socket.inode,
+                                pids
+                            );
                         }
                         Err(e) => {
                             eprintln!("PID検索エラー: {}", e);
