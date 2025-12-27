@@ -102,7 +102,7 @@ fn get_inode_from_port(port: u16, protocols: &[Protocol]) -> io::Result<Vec<Sock
 /// socket:[inode] にリンクしているものを探す
 fn get_pid_from_inode(inode: u64) -> io::Result<Vec<u32>> {
     let mut pids = Vec::new();
-    let socket_pattern = format!("socket:[{}]", inode);
+    let socket_pattern = format!("socket:[{inode}]");
 
     let proc_dir = Path::new("/proc");
     if let Ok(entries) = fs::read_dir(proc_dir) {
@@ -117,11 +117,10 @@ fn get_pid_from_inode(inode: u64) -> io::Result<Vec<u32>> {
                 if let Ok(fd_entries) = fs::read_dir(&fd_dir) {
                     for fd_entry in fd_entries.flatten() {
                         if let Ok(link_target) = read_link(fd_entry.path()) {
-                            if link_target.to_string_lossy() == socket_pattern {
-                                if !pids.contains(&pid) {
+                            if link_target.to_string_lossy() == socket_pattern
+                                && !pids.contains(&pid) {
                                     pids.push(pid);
                                 }
-                            }
                         }
                     }
                 }
@@ -145,8 +144,7 @@ fn main() {
         Ok(sockets) => {
             if sockets.is_empty() {
                 println!(
-                    "ポート {} を使用しているソケットが見つかりませんでした",
-                    port
+                    "ポート {port} を使用しているソケットが見つかりませんでした"
                 );
             } else {
                 println!("PROTOCOL\tPORT\tINODE\tPID");
@@ -162,14 +160,14 @@ fn main() {
                             );
                         }
                         Err(e) => {
-                            eprintln!("PID検索エラー: {}", e);
+                            eprintln!("PID検索エラー: {e}");
                         }
                     }
                 }
             }
         }
         Err(e) => {
-            eprintln!("inode検索エラー: {}", e);
+            eprintln!("inode検索エラー: {e}");
         }
     }
 }
