@@ -1,4 +1,4 @@
-# mappp
+# mappp(Mapping Port and Process)
 
 ポート番号から、そのポートを使用しているプロセスの PID を探す CLI ツールです。
 `/proc` を参照するため Linux 環境向けです。
